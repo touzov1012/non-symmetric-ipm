@@ -136,7 +136,7 @@ def SelfDualNewtonSystem(A, b, c):
     
     return np.c_[yA, xA, sA]
 
-def NSSolve(A, b, c, H, g, eps = 0.000001, beta = 0.2, xi = 0.5):
+def NSSolve(A, b, c, H, g, eps = 0.000001, beta = 0.2, xi = 0.5, x0 = None, y0 = None, s0 = None):
     """
     Solve the non-symmetric conic problem with the Skajaa Ye PCA
     (A,b,c): data
@@ -159,9 +159,9 @@ def NSSolve(A, b, c, H, g, eps = 0.000001, beta = 0.2, xi = 0.5):
     nA = SelfDualNewtonSystem(A, b, c)
     nb = np.zeros(nA.shape[0])
     
-    y = np.zeros(m)
-    x = np.ones(n)
-    s = np.ones(n)
+    y = y0 if y0 is not None else np.zeros(m)
+    x = np.append(x0, 1) if x0 is not None else np.ones(n)
+    s = np.append(s0, 1) if s0 is not None else np.ones(n)
     
     gp = lambda u: extg(g, u)
     Hp = lambda u: extH(H, u)

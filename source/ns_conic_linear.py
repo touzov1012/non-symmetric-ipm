@@ -6,7 +6,7 @@ Created on Sat Jan 16 09:24:15 2021
 """
 
 import numpy as np
-from ns_utility import *
+from ns_conic import *
 
 def g(x):
     """

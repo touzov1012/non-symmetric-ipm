@@ -61,15 +61,16 @@ def ChebyGrid(n, d):
     x = ChebyPts2(d)
     
     return np.array(np.meshgrid(*list(np.tile(x,(n,1))))).T.reshape(-1,n)
-
-def ChebyVandermonde(n, d):
+    
+def ChebyVandermonde(pts, d):
     """
     Create a vandermonde matrix with (d+1)^n rows and U columns
     where U is the dimension of poly in n variats up to degree d.
     Points are taken from the Chebyshev grid function
     """
     
-    grid = ChebyGrid(n, d)
+    n = pts.shape[1]
+    m = pts.shape[0]
     
     P = Partition(n+1, d)
     P = P[:,1:]
@@ -77,11 +78,11 @@ def ChebyVandermonde(n, d):
     U = P.shape[0]
     ind = np.eye(2*d+1)
     
-    V = np.ones((grid.shape[0], U))
+    V = np.ones((m, U))
     
     for i in range(U):
         for j in range(n):
-            V[:,i] *= np.polynomial.chebyshev.chebval(grid[:,j], ind[:,P[i,j]])
+            V[:,i] *= np.polynomial.chebyshev.chebval(pts[:,j], ind[:,P[i,j]])
     
     return V
 
@@ -131,9 +132,10 @@ def Fekete(n, d):
     for polynomials up to degree d
     """
     
-    grid = ChebyVandermonde(n, d)
-    inds = MaxVolumeSubMat(grid)
-    return ChebyGrid(n, d)[inds,:]
+    grid = ChebyGrid(n, d)
+    vand = ChebyVandermonde(grid, d)
+    inds = MaxVolumeSubMat(vand)
+    return grid[inds,:]
     
     
 def UnisolventPoints(n, d):
@@ -148,5 +150,7 @@ def UnisolventPoints(n, d):
         return Padua(d)
     else:
         return Fekete(n, d)
+
+
     
     
