@@ -58,11 +58,9 @@ def ChebyGrid(n, d):
     and return the points of the grid as rows of a 2D array
     """
     
-    x = []
-    for i in range(n):
-        x.append(ChebyPts2(d+i))
+    x = ChebyPts2(d)
     
-    return np.array(np.meshgrid(*x)).T.reshape(-1,n)
+    return np.array(np.meshgrid(*list(np.tile(x,(n,1))))).T.reshape(-1,n)
 
 def ChebyVandermonde(n, d):
     """
@@ -127,6 +125,28 @@ def MaxVolumeSubMat(A):
     return ind
             
     
+def Fekete(n, d):
+    """
+    Generate approximate Fekete points over the unit cube in n dimensions
+    for polynomials up to degree d
+    """
     
+    grid = ChebyVandermonde(n, d)
+    inds = MaxVolumeSubMat(grid)
+    return ChebyGrid(n, d)[inds,:]
+    
+    
+def UnisolventPoints(n, d):
+    """
+    Helper function to generate appropriate unisolvent point set based on
+    dimension n and available theory
+    """
+    
+    if n == 1:
+        return ChebyPts2(d)
+    elif n == 2:
+        return Padua(d)
+    else:
+        return Fekete(n, d)
     
     
