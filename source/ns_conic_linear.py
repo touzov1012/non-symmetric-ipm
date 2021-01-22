@@ -28,7 +28,7 @@ def Solve(A, b, c):
     Note: This isnt optimal for LP, but used for tests...
     """
     
-    return NSSolve(A, b, c, H, g)
+    return NSSolve(A, b, c, H, g, len(c))
 
 
 def TestLP():

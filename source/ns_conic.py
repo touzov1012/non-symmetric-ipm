@@ -23,22 +23,22 @@ def sqrtmatsyminv(A):
     [evals, evecs] = np.linalg.eigh(A)
     return evecs @ np.diag(1.0 / np.sqrt(evals)) @ evecs.T
 
-def DualityGap(x, s):
+def DualityGap(x, s, nu):
     """
     The complementary gap for a solution (x, s)
     """
     
-    return np.dot(x, s) / len(x)
+    return np.dot(x, s) / nu
 
-def Phi(x, s, g):
+def Phi(x, s, g, nu):
     """
     Descent direction for barrier in corrector phase
     g: gradient of the barrier
     """
     
-    return s + DualityGap(x, s) * g(x)
+    return s + DualityGap(x, s, nu) * g(x)
 
-def Prox(x, s, H, g):
+def Prox(x, s, H, g, nu):
     """
     Calculate the proximity to the central path
     H: Hessian of barrier
@@ -49,7 +49,7 @@ def Prox(x, s, H, g):
     if np.isnan(h).any():
         return float('inf')
     
-    phi = Phi(x, s, g)
+    phi = Phi(x, s, g, nu)
     
     return np.linalg.norm(sqrtmatsyminv(h) @ phi)
 
@@ -77,14 +77,14 @@ def extH(H, x):
     
     return hH
 
-def LineSearch(F, beta, x, s, dx, ds, L, U, iterates):
+def LineSearch(F, beta, nu, x, s, dx, ds, L, U, iterates):
     """
     Line search minimum value of alpha for F(x0 + d * alpha)
     """
     
     nx = x + dx * U
     ns = s + ds * U
-    gap = DualityGap(nx, ns)
+    gap = DualityGap(nx, ns, nu)
     
     U_val = F(nx, ns)
     
@@ -96,7 +96,7 @@ def LineSearch(F, beta, x, s, dx, ds, L, U, iterates):
         
     
     if U_val >= beta * gap:
-        return LineSearch(F, beta, x, s, dx, ds, L, (U + L) / 2, iterates - 1)
+        return LineSearch(F, beta, nu, x, s, dx, ds, L, (U + L) / 2, iterates - 1)
     else:
     	return U
 
@@ -136,7 +136,7 @@ def SelfDualNewtonSystem(A, b, c):
     
     return np.c_[yA, xA, sA]
 
-def NSSolve(A, b, c, H, g, eps = 0.000001, beta = 0.2, xi = 0.5, x0 = None, y0 = None, s0 = None):
+def NSSolve(A, b, c, H, g, nu, eps = 0.000001, beta = 0.2, xi = 0.5, x0 = None, y0 = None, s0 = None):
     """
     Solve the non-symmetric conic problem with the Skajaa Ye PCA
     (A,b,c): data
@@ -149,6 +149,7 @@ def NSSolve(A, b, c, H, g, eps = 0.000001, beta = 0.2, xi = 0.5, x0 = None, y0 =
     m = A.shape[0]
     nt = A.shape[1]
     n = nt + 1
+    nu = nu + 1
     
     eta = beta * xi
     kx = eta + np.sqrt(2 * eta * eta + n)
@@ -165,21 +166,24 @@ def NSSolve(A, b, c, H, g, eps = 0.000001, beta = 0.2, xi = 0.5, x0 = None, y0 =
     
     gp = lambda u: extg(g, u)
     Hp = lambda u: extH(H, u)
-    Pp = lambda u, w: Prox(u, w, Hp, gp)
+    Pp = lambda u, w: Prox(u, w, Hp, gp, nu)
     
     itr = 0
     
-    while DualityGap(x, s) >= eps:
+    
+    while DualityGap(x, s, nu) >= eps:
         # predictor phase
         
         itr += 1
         
         hess = Hp(x)
-        mu = DualityGap(x, s)
+        mu = DualityGap(x, s, nu)
+        
         
         #todo: double check
         nb[:-n] = -nA[:-n,:] @ np.r_[y, x, s]
         nb[-n:] = -s
+        
         
         nA[(m+n):,m:(m+n)] = mu * hess
         
@@ -189,7 +193,7 @@ def NSSolve(A, b, c, H, g, eps = 0.000001, beta = 0.2, xi = 0.5, x0 = None, y0 =
         dx = sol[m:(m+n)]
         ds = sol[(m+n):]
         
-        ls_alpha = LineSearch(Pp, beta, x, s, dx, ds, ap, ap + 2, 3)
+        ls_alpha = LineSearch(Pp, beta, nu, x, s, dx, ds, ap, ap + 2, 3)
         
         #print(str(ls_alpha) + " " + str(ap))
         
@@ -198,30 +202,31 @@ def NSSolve(A, b, c, H, g, eps = 0.000001, beta = 0.2, xi = 0.5, x0 = None, y0 =
         s = s + ls_alpha * ds
         
         # corrector phase
-        
-        hess = Hp(x)
-        mu = DualityGap(x, s)
-        
-        nb[:] = 0
-        nb[-n:] = -Phi(x, s, gp)
-        
-        nA[(m+n):,m:(m+n)] = mu * hess
-        
-        sol = np.linalg.solve(nA, nb)
-        
-        dy = sol[0:m]
-        dx = sol[m:(m+n)]
-        ds = sol[(m+n):]
-        
-        ls_alpha = LineSearch(Pp, eta, x, s, dx, ds, ac, ac + 2, 3)
-        
-        #print(str(ls_alpha) + " " + str(ap))
-        
-        y = y + ls_alpha * dy
-        x = x + ls_alpha * dx
-        s = s + ls_alpha * ds
+        for j in range(0,1):
+            hess = Hp(x)
+            mu = DualityGap(x, s, nu)
+            
+            nb[:] = 0
+            nb[-n:] = -Phi(x, s, gp, nu)
+            
+            nA[(m+n):,m:(m+n)] = mu * hess
+            
+            sol = np.linalg.solve(nA, nb)
+            
+            dy = sol[0:m]
+            dx = sol[m:(m+n)]
+            ds = sol[(m+n):]
+            
+            ls_alpha = LineSearch(Pp, eta, nu, x, s, dx, ds, ac, ac + 2, 3)
+            
+            #print(str(ls_alpha) + " " + str(ap))
+            
+            y = y + ls_alpha * dy
+            x = x + ls_alpha * dx
+            s = s + ls_alpha * ds
     
     print("Newton steps: " + str(itr))
+    
     
     if x[-1] > 2 * s[-1] and x[-1] > eps:
         """

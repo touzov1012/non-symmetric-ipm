@@ -7,6 +7,21 @@ Created on Wed Jan 20 13:39:41 2021
 
 import numpy as np
 
+def Choose(n, k):
+    """
+    A fast way to calculate binomial coefficients by Andrew Dalke (contrib).
+    """
+    if 0 <= k <= n:
+        ntok = 1
+        ktok = 1
+        for t in range(1, min(k, n - k) + 1):
+            ntok *= n
+            ktok *= t
+            n -= 1
+        return ntok // ktok
+    else:
+        return 0
+
 def Partition(n, d):
     """
     create all ways to decompose d as a sum of n positive integers
@@ -145,7 +160,7 @@ def UnisolventPoints(n, d):
     """
     
     if n == 1:
-        return ChebyPts2(d)
+        return ChebyPts2(d)[None].T
     elif n == 2:
         return Padua(d)
     else:
