@@ -63,7 +63,18 @@ class STATS:
     status: int
     
     def __repr__(self):
-        return repr(f'in-cone: {self.inside}, proxi: {self.proxi:.6f}, gap: {self.gap:.6f}, elapsed: {self.elapsed:.3f}, newton-steps: {self.nsteps}, pval: {self.pval:.4f}, dval: {self.dval:.4f}, status: {self.status}')
+        
+        stats = ''
+        if self.status == 1:
+            stats = 'P-D optimal'
+        elif self.status == 2:
+            stats = 'P/D infeasible'
+        elif self.status == 3:
+            stats = 'ill-posed / pathological'
+        else:
+            stats = 'working...'
+        
+        return repr(f'in-cone: {self.inside}, proxi: {self.proxi:.6f}, gap: {self.gap:.6f}, elapsed: {self.elapsed:.3f}, newton-steps: {self.nsteps}, pval: {self.pval:.4f}, dval: {self.dval:.4f}, status: {stats}')
     
 @dataclass
 class INIT:

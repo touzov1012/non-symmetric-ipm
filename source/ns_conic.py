@@ -42,14 +42,18 @@ def ProxInfo(dSoln, dCone):
     pdist: distance to central path
     """
     
+    # get the gradient, hessian and cone check at x
     [g0, H0, inside] = dCone.gHc(dSoln.x)
     
+    # if either additional parameter is not in the cone
     if dSoln.xtau <= 0 or dSoln.stau <= 0:
         inside = False
     
+    # we cannot compute if we are outside the cone
     if inside == False:
         return [False, np.nan, np.nan, np.nan, np.inf]
     
+    # extend gradient and hessian
     g = np.append(g0, -1.0 / dSoln.xtau)
     
     H = np.zeros((H0.shape[0]+1,H0.shape[1]+1))
@@ -58,6 +62,7 @@ def ProxInfo(dSoln, dCone):
     
     gap = RelativeGap(dSoln, dCone)
     
+    # proximity distance and gradient
     phi = np.append(dSoln.s, dSoln.stau) + gap * g
     
     pdist = np.linalg.norm(sqrtmatsyminv(H) @ phi)
@@ -135,21 +140,21 @@ def UpdateStats(dStats, dData, dSoln, dCone, dInit):
     
     [inside, H, g, phi, proxi] = ProxInfo(dSoln, dCone)
     
-    dStats.inside = inside
-    dStats.H = H
-    dStats.g = g
-    dStats.phi = phi
-    dStats.proxi = proxi
-    dStats.gap = RelativeGap(dSoln, dCone)
-    dStats.elapsed = time.time() - dStats.stime
-    dStats.nsteps += 1
-    dStats.pres = np.linalg.norm(dData.A @ dSoln.x - dData.b * dSoln.xtau, np.inf)
-    dStats.dres = np.linalg.norm(dData.A.T @ dSoln.y - dData.c * dSoln.xtau + dSoln.s, np.inf)
-    dStats.gres = np.abs(np.dot(dData.b, dSoln.y) - np.dot(dData.c, dSoln.x) - dSoln.stau)
-    dStats.pval = np.dot(dData.c, dSoln.x) / max(dSoln.xtau, 0.0000001)
-    dStats.dval = np.dot(dData.b, dSoln.y) / max(dSoln.xtau, 0.0000001)
+    dStats.inside = inside                                                                          # is x in cone
+    dStats.H = H                                                                                    # Hessian at x
+    dStats.g = g                                                                                    # gradient at x
+    dStats.phi = phi                                                                                # phi(x,s)
+    dStats.proxi = proxi                                                                            # proximity to central path
+    dStats.gap = RelativeGap(dSoln, dCone)                                                          # relative gap
+    dStats.elapsed = time.time() - dStats.stime                                                     # elapsed time to this iter
+    dStats.nsteps += 1                                                                              # each stat update used for newton solve
+    dStats.pres = np.linalg.norm(dData.A @ dSoln.x - dData.b * dSoln.xtau, np.inf)                  # primal residual
+    dStats.dres = np.linalg.norm(dData.A.T @ dSoln.y - dData.c * dSoln.xtau + dSoln.s, np.inf)      # dual residual
+    dStats.gres = np.abs(np.dot(dData.b, dSoln.y) - np.dot(dData.c, dSoln.x) - dSoln.stau)          # gap residual
+    dStats.pval = np.dot(dData.c, dSoln.x) / max(dSoln.xtau, 0.0000001)                             # value of primal problem
+    dStats.dval = np.dot(dData.b, dSoln.y) / max(dSoln.xtau, 0.0000001)                             # value of dual problem
     
-    selfFeas = dStats.pres < dInit.eps and dStats.dres < dInit.eps and dStats.gres < dInit.eps
+    selfFeas = dStats.pres < dInit.eps and dStats.dres < dInit.eps and dStats.gres < dInit.eps      # is the current iterate self dual feasible
     
     if selfFeas:
         if np.abs(dStats.pval - dStats.dval) < dInit.eps:
@@ -172,25 +177,35 @@ def NSSolve(dData, dInit, dCone):
     dCone: cone data
     """
     
+    # constraint count, primal variable count
     m = dData.A.shape[0]
     n = dData.A.shape[1]
     nplus = n + 1
     
+    # create matrix for self dual LHS and vector for RHS
     nA = SelfDualNewtonSystem(dData)
     nb = np.zeros(nA.shape[0])
     
+    # init solution which will be updated
     dSoln = SOLN(dInit.y0, dInit.x0, dInit.s0, 1.0, 1.0)
     
+    # initialize solution stats which will be continually updated
     dStats = STATS(False, np.nan, np.nan, np.nan, 0.0, 0.0, time.time(), 0.0, 0, 0.0, 0.0, 0.0, 0.0, 0.0, 0)
-    dDelta = SOLN(np.zeros(m), np.zeros(n), np.zeros(n), 0.0, 0.0)
     UpdateStats(dStats, dData, dSoln, dCone, dInit)
+    
+    # will be delta(y,x,s) applied at each step
+    dDelta = SOLN(np.zeros(m), np.zeros(n), np.zeros(n), 0.0, 0.0)
     
     print(dStats)
     
+    # keep track of overflow
     iterates = 0
     maxItr = 1000
     
+    # while working and not overflowing
     while dStats.status == 0 and iterates < maxItr:
+        iterates += 1
+        
         # predictor phase
         nb[:-nplus] = -nA[:-nplus,:] @ np.r_[dSoln.y, dSoln.x, dSoln.xtau, dSoln.s, dSoln.stau]
         nb[-nplus:] = -np.r_[dSoln.s, dSoln.stau]
@@ -216,6 +231,7 @@ def NSSolve(dData, dInit, dCone):
         
         print(dStats)
     
+    # if we are still working here, we have overflowed
     if dStats.status == 0:
         dStats.status = 3
         print(dStats)
