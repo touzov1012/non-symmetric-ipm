@@ -18,8 +18,9 @@ f(xi) where xi is the ith interpolation point.
 import numpy as np
 from ns_conic import *
 from ns_util_poly import *
+from ns_structs import *
 
-def Pmat(n, d):
+def Pmat(dData):
     """
     Encode coordinates, with respect to (2d + n choose n) interpolant basis,
     of some basis for (n, d) polynomials as columns in a tall matrix. This basis
@@ -37,52 +38,44 @@ def Pmat(n, d):
     for the ith interpolant point.
     """
     
-    pts = UnisolventPoints(n, 2*d)
-    V = ChebyVandermonde(pts, d)
+    pts = UnisolventPoints(dData.n, dData.d2)
+    V = ChebyVandermonde(pts, dData.d)
     [P, R] = np.linalg.qr(V)
     
     return P
 
-def InitDelta(A, b, c, g1):
+def InitDelta(dData, g1):
     """
     Find the initialization parameter for building the starting point (x, s)
     where x = delta * 1 and s = -delta^-1 g(1)
     """
     
-    a = np.sum(A, axis=1)
-    dP = np.amax((1 + np.abs(b)) / (1 + np.abs(a)))
-    dD = np.amax((1 + np.abs(g1)) / (1 + np.abs(c)))
+    a = np.sum(dData.A, axis=1)
+    dP = np.amax((1 + np.abs(dData.b)) / (1 + np.abs(a)))
+    dD = np.amax((1 + np.abs(g1)) / (1 + np.abs(dData.c)))
     
     return np.sqrt(dP * dD)
     
 
-def g(x, P):
+def gHc(x, P):
     """
-    Gradient of the barrier at L(x)
-    """
-    
-    return -np.diag(P @ np.linalg.inv(P.T @ np.diag(x) @ P) @ P.T)
-    
-
-def H(x, P):
-    """
-    Hessian of the barrier at L(x)
+    Gradient, Hessian, Cone check at L(x)
     """
     
     L = P.T @ np.diag(x) @ P
     
     [evals, evecs] = np.linalg.eigh(L)
     
-    if (evals <= 0).any():
-        return np.nan
+    check = (evals > 0).all()
     
     Linv = evecs @ np.diag(1.0 / evals) @ evecs.T
     
     G = P @ Linv @ P.T
-    return G * G
+    
+    return [-np.diag(G), G * G, check]
 
 
-def Solve(A, b, c, n, d):
+def Solve(dData):
     """
     Solve the moment program using non-symmetric cone alg where n is the number
     of polynomial variats and d is the largest degree of the polynomials.
@@ -97,21 +90,23 @@ def Solve(A, b, c, n, d):
     point evaluations.
     """
     
-    P = Pmat(n, d)
-    dH = lambda x: H(x, P)
-    dg = lambda x: g(x, P)
+    P = Pmat(dData)
+    dgHc = lambda x: gHc(x, P)
     
-    e = np.ones(A.shape[1])
-    g1 = dg(e)
+    e = np.ones(dData.A.shape[1])
+    g1 = dgHc(e)[0]
     
-    delta = InitDelta(A, b, c, g1)
+    delta = InitDelta(dData, g1)
     
     x0 = delta * e
     s0 = -g1 / delta
     
-    nu = Choose(n + d, d)
+    nu = P.shape[1]
     
-    return NSSolve(A, b, c, dH, dg, nu, x0 = x0, s0 = s0)
+    dInit = INIT(np.zeros(dData.A.shape[0]), x0, s0)
+    dCone = CONE(dgHc, nu)
+    
+    return NSSolve(dData, dInit, dCone)
     
 
 def TestProblem():
@@ -123,8 +118,8 @@ def TestProblem():
     F = lambda x: (4 - 2.1*x[0]**2 + x[0]**4/3)*x[0]**2 + x[0]*x[1] + (-4+4*x[1]**2)*x[1]**2
     
     n = 2
-    d2 = 6
     d = 3
+    d2 = 6
     
     pts = UnisolventPoints(n, d2)
     
@@ -132,6 +127,11 @@ def TestProblem():
     A = np.ones((1,len(c)))
     b = np.ones(1)
     
-    return [A, b, c, n, d]
+    dData = DATA(A, b, c)
+    dData.n = n
+    dData.d = d
+    dData.d2 = d2
+    
+    return dData
     
     

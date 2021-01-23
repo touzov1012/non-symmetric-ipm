@@ -5,7 +5,9 @@ Created on Sat Jan 16 09:23:48 2021
 @author: alex
 """
 
+import time
 import numpy as np
+from ns_structs import *
 
 def sqrtmatsym(A):
     """
@@ -23,84 +25,74 @@ def sqrtmatsyminv(A):
     [evals, evecs] = np.linalg.eigh(A)
     return evecs @ np.diag(1.0 / np.sqrt(evals)) @ evecs.T
 
-def DualityGap(x, s, nu):
+def RelativeGap(dSoln, dCone):
     """
     The complementary gap for a solution (x, s)
     """
     
-    return np.dot(x, s) / nu
+    return (np.dot(dSoln.x, dSoln.s) + dSoln.xtau * dSoln.stau) / (dCone.nu + 1)
 
-def Phi(x, s, g, nu):
+def ProxInfo(dSoln, dCone):
     """
-    Descent direction for barrier in corrector phase
-    g: gradient of the barrier
+    Calculate all proximity info.
+    inside: is x inside the cone
+    H: hessian at x
+    g: gradient at x
+    phi: descent direction
+    pdist: distance to central path
     """
     
-    return s + DualityGap(x, s, nu) * g(x)
+    [g0, H0, inside] = dCone.gHc(dSoln.x)
+    
+    if dSoln.xtau <= 0 or dSoln.stau <= 0:
+        inside = False
+    
+    if inside == False:
+        return [False, np.nan, np.nan, np.nan, np.inf]
+    
+    g = np.append(g0, -1.0 / dSoln.xtau)
+    
+    H = np.zeros((H0.shape[0]+1,H0.shape[1]+1))
+    H[:-1,:-1] = H0
+    H[-1:,-1:] = 1.0 / (dSoln.xtau * dSoln.xtau)
+    
+    gap = RelativeGap(dSoln, dCone)
+    
+    phi = np.append(dSoln.s, dSoln.stau) + gap * g
+    
+    pdist = np.linalg.norm(sqrtmatsyminv(H) @ phi)
+    
+    return [inside, H, g, phi, pdist]
 
-def Prox(x, s, H, g, nu):
+def SplitToSoln(dSoln, yxs):
     """
-    Calculate the proximity to the central path
-    H: Hessian of barrier
-    g: gradient of barrier
+    Split a vector among the components of dSoln
     """
-    h = H(x)
     
-    if np.isnan(h).any():
-        return float('inf')
+    m = len(dSoln.y)
+    n = len(dSoln.x)
     
-    phi = Phi(x, s, g, nu)
+    dSoln.y = yxs[0:m]
+    dSoln.x = yxs[m:(m+n)]
+    dSoln.xtau = yxs[m+n]
+    dSoln.s = yxs[(m+n+1):-1]
+    dSoln.stau = yxs[-1]
     
-    return np.linalg.norm(sqrtmatsyminv(h) @ phi)
 
-def extg(g, x):
+def LineSearch(dSoln, dDelta, dCone, radius, limit):
     """
-    Evaluate extended gradient for self dual embedding
+    Line search for the largest dDelta such that dSoln in the proxi ball
     """
     
-    n = len(x)
-    hg = np.zeros(n)
-    hg[:-1] = g(x[:-1])
-    hg[-1:] = -1.0 / x[-1:]
+    dSoln.MAD(dDelta, limit)
+    limit = -limit
     
-    return hg
+    while ProxInfo(dSoln, dCone)[4] >= radius * RelativeGap(dSoln, dCone):
+        limit /= 2
+        dSoln.MAD(dDelta, limit)
+    
 
-def extH(H, x):
-    """
-    Evaluate extended Hessian for self dual embedding
-    """
-    
-    n = len(x)
-    hH = np.zeros((n,n))
-    hH[:-1,:-1] = H(x[:-1])
-    hH[-1:,-1:] = 1.0 / (x[-1:] * x[-1:])
-    
-    return hH
-
-def LineSearch(F, beta, nu, x, s, dx, ds, L, U, iterates):
-    """
-    Line search minimum value of alpha for F(x0 + d * alpha)
-    """
-    
-    nx = x + dx * U
-    ns = s + ds * U
-    gap = DualityGap(nx, ns, nu)
-    
-    U_val = F(nx, ns)
-    
-    if iterates <= 0:
-        if U_val < beta * gap:
-            return U
-        else:
-            return L
-        
-    
-    if U_val >= beta * gap:
-        return LineSearch(F, beta, nu, x, s, dx, ds, L, (U + L) / 2, iterates - 1)
-    else:
-    	return U
-
-def SelfDualNewtonSystem(A, b, c):
+def SelfDualNewtonSystem(data):
     """
     Create the self dual embedding with a known interior point for the problem
     
@@ -122,12 +114,12 @@ def SelfDualNewtonSystem(A, b, c):
     xs = mu are appended in linearized form
     """
     
-    n = A.shape[1]
-    m = A.shape[0]
+    n = data.A.shape[1]
+    m = data.A.shape[0]
     
-    A_star = np.c_[A,-b]
+    A_star = np.c_[data.A,-data.b]
     C = np.zeros((n+1,n+1))
-    C[0:n,n] = c
+    C[0:n,n] = data.c
     C[n,0:n] = -C[0:n,n].T
     
     yA = np.r_[np.zeros((m,m)), -A_star.T, np.zeros((n+1, m))]
@@ -136,113 +128,96 @@ def SelfDualNewtonSystem(A, b, c):
     
     return np.c_[yA, xA, sA]
 
-def NSSolve(A, b, c, H, g, nu, eps = 0.000001, beta = 0.2, xi = 0.5, x0 = None, y0 = None, s0 = None):
+def UpdateStats(dStats, dData, dSoln, dCone, dInit):
+    """
+    Update current solution stats
+    """
+    
+    [inside, H, g, phi, proxi] = ProxInfo(dSoln, dCone)
+    
+    dStats.inside = inside
+    dStats.H = H
+    dStats.g = g
+    dStats.phi = phi
+    dStats.proxi = proxi
+    dStats.gap = RelativeGap(dSoln, dCone)
+    dStats.elapsed = time.time() - dStats.stime
+    dStats.nsteps += 1
+    dStats.pres = np.linalg.norm(dData.A @ dSoln.x - dData.b * dSoln.xtau, np.inf)
+    dStats.dres = np.linalg.norm(dData.A.T @ dSoln.y - dData.c * dSoln.xtau + dSoln.s, np.inf)
+    dStats.gres = np.abs(np.dot(dData.b, dSoln.y) - np.dot(dData.c, dSoln.x) - dSoln.stau)
+    dStats.pval = np.dot(dData.c, dSoln.x) / max(dSoln.xtau, 0.0000001)
+    dStats.dval = np.dot(dData.b, dSoln.y) / max(dSoln.xtau, 0.0000001)
+    
+    selfFeas = dStats.pres < dInit.eps and dStats.dres < dInit.eps and dStats.gres < dInit.eps
+    
+    if selfFeas:
+        if np.abs(dStats.pval - dStats.dval) < dInit.eps:
+            dStats.status = 1 # optimal PD
+        elif dSoln.xtau < dInit.eps * 0.01 and dSoln.stau > dInit.eps * 0.01:
+            dStats.status = 2 # infeasible P/D
+        elif dSoln.xtau < dInit.eps * 0.1 and dSoln.stau < dInit.eps * 0.1:
+            dStats.status = 3 # ill-posed, pathological
+        else:
+            dStats.status = 0 # still working
+    else:
+        dStats.status = 0 # working
+        
+
+def NSSolve(dData, dInit, dCone):
     """
     Solve the non-symmetric conic problem with the Skajaa Ye PCA
-    (A,b,c): data
-    H: Hessian of barrier
-    g: gradient of barrier
-    beta: central path ball radius
-    xi: corrector ball scaling
+    dData: problem data
+    dInit: initialization data
+    dCone: cone data
     """
     
-    m = A.shape[0]
-    nt = A.shape[1]
-    n = nt + 1
-    nu = nu + 1
+    m = dData.A.shape[0]
+    n = dData.A.shape[1]
+    nplus = n + 1
     
-    eta = beta * xi
-    kx = eta + np.sqrt(2 * eta * eta + n)
-    
-    ap = 0.02 / kx
-    ac = 1
-    
-    nA = SelfDualNewtonSystem(A, b, c)
+    nA = SelfDualNewtonSystem(dData)
     nb = np.zeros(nA.shape[0])
     
-    y = y0 if y0 is not None else np.zeros(m)
-    x = np.append(x0, 1) if x0 is not None else np.ones(n)
-    s = np.append(s0, 1) if s0 is not None else np.ones(n)
+    dSoln = SOLN(dInit.y0, dInit.x0, dInit.s0, 1.0, 1.0)
     
-    gp = lambda u: extg(g, u)
-    Hp = lambda u: extH(H, u)
-    Pp = lambda u, w: Prox(u, w, Hp, gp, nu)
+    dStats = STATS(False, np.nan, np.nan, np.nan, 0.0, 0.0, time.time(), 0.0, 0, 0.0, 0.0, 0.0, 0.0, 0.0, 0)
+    dDelta = SOLN(np.zeros(m), np.zeros(n), np.zeros(n), 0.0, 0.0)
+    UpdateStats(dStats, dData, dSoln, dCone, dInit)
     
-    itr = 0
+    print(dStats)
     
+    iterates = 0
+    maxItr = 1000
     
-    while DualityGap(x, s, nu) >= eps:
+    while dStats.status == 0 and iterates < maxItr:
         # predictor phase
+        nb[:-nplus] = -nA[:-nplus,:] @ np.r_[dSoln.y, dSoln.x, dSoln.xtau, dSoln.s, dSoln.stau]
+        nb[-nplus:] = -np.r_[dSoln.s, dSoln.stau]
         
-        itr += 1
+        nA[(m+nplus):,m:(m+nplus)] = dStats.gap * dStats.H
         
-        hess = Hp(x)
-        mu = DualityGap(x, s, nu)
-        
-        
-        #todo: double check
-        nb[:-n] = -nA[:-n,:] @ np.r_[y, x, s]
-        nb[-n:] = -s
-        
-        
-        nA[(m+n):,m:(m+n)] = mu * hess
-        
-        sol = np.linalg.solve(nA, nb)
-        
-        dy = sol[0:m]
-        dx = sol[m:(m+n)]
-        ds = sol[(m+n):]
-        
-        ls_alpha = LineSearch(Pp, beta, nu, x, s, dx, ds, ap, ap + 2, 3)
-        
-        #print(str(ls_alpha) + " " + str(ap))
-        
-        y = y + ls_alpha * dy
-        x = x + ls_alpha * dx
-        s = s + ls_alpha * ds
+        SplitToSoln(dDelta, np.linalg.solve(nA, nb))
+        LineSearch(dSoln, dDelta, dCone, dInit.beta, 4)
         
         # corrector phase
-        for j in range(0,1):
-            hess = Hp(x)
-            mu = DualityGap(x, s, nu)
+        for j in range(0,dInit.correctors):
+            UpdateStats(dStats, dData, dSoln, dCone, dInit)
             
             nb[:] = 0
-            nb[-n:] = -Phi(x, s, gp, nu)
+            nb[-nplus:] = -dStats.phi
             
-            nA[(m+n):,m:(m+n)] = mu * hess
+            nA[(m+nplus):,m:(m+nplus)] = dStats.gap * dStats.H
             
-            sol = np.linalg.solve(nA, nb)
-            
-            dy = sol[0:m]
-            dx = sol[m:(m+n)]
-            ds = sol[(m+n):]
-            
-            ls_alpha = LineSearch(Pp, eta, nu, x, s, dx, ds, ac, ac + 2, 3)
-            
-            #print(str(ls_alpha) + " " + str(ap))
-            
-            y = y + ls_alpha * dy
-            x = x + ls_alpha * dx
-            s = s + ls_alpha * ds
+            SplitToSoln(dDelta, np.linalg.solve(nA, nb))
+            LineSearch(dSoln, dDelta, dCone, dInit.eta, 4)
+        
+        UpdateStats(dStats, dData, dSoln, dCone, dInit)
+        
+        print(dStats)
     
-    print("Newton steps: " + str(itr))
+    if dStats.status == 0:
+        dStats.status = 3
+        print(dStats)
     
-    
-    if x[-1] > 2 * s[-1] and x[-1] > eps:
-        """
-        P optimal
-        """
-        x = x[0:-1] / x[-1]
-        print("Optimal Value: " + str(np.dot(c, x)) + " with x = \n" + str(x))
-        return x
-    elif s[-1] > 2 * x[-1] and s[-1] > eps:
-        """
-        P/D inf
-        """
-        print("Primal or Dual Infeasible")
-        return None
-    else:
-        """
-        Pathology encountered
-        """
-        return None
+    return [dSoln, dStats]
