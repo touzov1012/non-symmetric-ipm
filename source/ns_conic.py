@@ -193,6 +193,13 @@ def NSSolve(dData, dInit, dCone):
     dStats = STATS(False, np.nan, np.nan, np.nan, 0.0, 0.0, time.time(), 0.0, 0, 0.0, 0.0, 0.0, 0.0, 0.0, 0)
     UpdateStats(dStats, dData, dSoln, dCone, dInit)
     
+    if dStats.inside == False:
+        print('Initial primal point not inside cone.')
+        return None
+    
+    if dStats.proxi > dInit.eta * dStats.gap:
+        print('Initial point too far off central path: may not converge.')
+    
     # will be delta(y,x,s) applied at each step
     dDelta = SOLN(np.zeros(m), np.zeros(n), np.zeros(n), 0.0, 0.0)
     
