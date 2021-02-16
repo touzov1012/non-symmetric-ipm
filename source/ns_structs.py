@@ -2,6 +2,8 @@
 """
 Created on Fri Jan 22 18:04:18 2021
 
+Common data structures.
+
 @author: alex
 """
 

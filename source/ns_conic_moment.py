@@ -18,6 +18,7 @@ f(xi) where xi is the ith interpolation point.
 import numpy as np
 from ns_conic import *
 from ns_util_poly import *
+from ns_util_linalg import *
 from ns_structs import *
 
 def Pmat(dData):
@@ -27,15 +28,19 @@ def Pmat(dData):
     is declared implicitly through the point evaluations (coordinates) at the
     unisolvent points.
     
-    L(x) = P'diag(x)P
+    L(x) = P'diag(g*x)P
     
-    so that
+    for some domain restriction g(x) >= 0 where L() is the canonical map to Sn
     
-    L(q) = P'diag(q)P = pp'
+    L(q) = P'diag(g*q)P = gpp'
     
     where q is the basis of Lagrange polynomials on the interpolant points
-    and so when passing x: xi is the desired evalutation of the interpolant basis
+    and so when passing x: xi acts as the desired evalutation of the interpolant basis
     for the ith interpolant point.
+    
+    For simplicity, this function returns a single P matrix, but if we have
+    multiple domain restrictions gi(x) >= 0, we could speed up by returning multiple
+    P matrices where column counts are based on the degree of gi.
     """
     
     pts = UnisolventPoints(dData.n, dData.d2)
@@ -57,22 +62,38 @@ def InitDelta(dData, g1):
     return np.sqrt(dP * dD)
     
 
-def gHc(x, P):
+def gHc(x, P, g):
     """
-    Gradient, Hessian, Cone check at L(x)
+    Gradient, Hessian, Cone check at L(x).
+    x = basis evaluations
+    P = described as above used for mapping into PSD cone
+    g = array of domain restrictions, polynomial functions including g0(x) = 1
+        g is a collection of vectors representing gi evaluated at each unisol.
+        point. Each vector is a row.
     """
     
-    L = P.T @ np.diag(x) @ P
+    # fill 3D array along diagonal with g * x
+    Gx = DiagExpand(g * x)
+    
+    L = P.T @ Gx @ P
     
     [evals, evecs] = np.linalg.eigh(L)
     
     check = (evals > 0).all()
     
-    Linv = evecs @ np.diag(1.0 / evals) @ evecs.T
+    if check == False:
+        return [None, None, check]
+    
+    Linv = evecs @ DiagExpand(1.0 / evals) @ evecs.transpose((0,2,1))
     
     G = P @ Linv @ P.T
     
-    return [-np.diag(G), G * G, check]
+    Gd = np.diagonal(G, axis1=-1, axis2=-2)
+    
+    grad = -np.sum(Gd * g, axis=0)
+    hess = np.sum(g[:,:,None] * g[:,None,:] * G * G, axis=0)
+    
+    return [grad, hess, check]
 
 
 def Solve(dData):
@@ -91,7 +112,7 @@ def Solve(dData):
     """
     
     P = Pmat(dData)
-    dgHc = lambda x: gHc(x, P)
+    dgHc = lambda x: gHc(x, P, dData.g)
     
     e = np.ones(dData.A.shape[1])
     g1 = dgHc(e)[0]
@@ -101,7 +122,8 @@ def Solve(dData):
     x0 = delta * e
     s0 = -g1 / delta
     
-    nu = P.shape[1]
+    # barrier parameter
+    nu = P.shape[1] * dData.g.shape[0]
     
     dInit = INIT(np.zeros(dData.A.shape[0]), x0, s0)
     dCone = CONE(dgHc, nu)
@@ -111,19 +133,35 @@ def Solve(dData):
 
 def TestProblem():
     """
-    Minimize the famous 6 hump camel back function.
-    Opt: -1.0316
+    Minimize the butcher polynomial over the unit cube.
+    Opt: -4.6667
     """
     
-    F = lambda x: (4 - 2.1*x[0]**2 + x[0]**4/3)*x[0]**2 + x[0]*x[1] + (-4+4*x[1]**2)*x[1]**2
+    F = lambda x: x[5]*x[1]**2 + x[4]*x[2]**2 - x[0]*x[3]**2 + x[3]**3 + x[3]**2 - 1/3*x[0] + 4/3*x[3]
     
-    n = 2
-    d = 3
-    d2 = 6
+    g0 = lambda x: 1
+    g1 = lambda x: x[0] + 1
+    g2 = lambda x: 1 - x[0]
+    g3 = lambda x: x[1] + 1
+    g4 = lambda x: 1 - x[1]
+    g5 = lambda x: x[2] + 1
+    g6 = lambda x: 1 - x[2]
+    g7 = lambda x: x[3] + 1
+    g8 = lambda x: 1 - x[3]
+    g9 = lambda x: x[4] + 1
+    g10 = lambda x: 1 - x[4]
+    g11 = lambda x: x[5] + 1
+    g12 = lambda x: 1 - x[5]
+    
+    n = 6
+    d = 2
+    d2 = d*2
     
     pts = UnisolventPoints(n, d2)
     
-    c = np.array([F(pts[i,:]) for i in range(0, pts.shape[0])])
+    g = FnVandermonde(pts, [F,g0,g1,g2,g3,g4,g5,g6,g7,g8,g9,g10,g11,g12])
+    
+    c = g[:,0]
     A = np.ones((1,len(c)))
     b = np.ones(1)
     
@@ -131,6 +169,7 @@ def TestProblem():
     dData.n = n
     dData.d = d
     dData.d2 = d2
+    dData.g = g[:,1:].T
     
     return dData
     

@@ -2,6 +2,8 @@
 """
 Created on Wed Jan 20 13:39:41 2021
 
+Utility functions for anything polynomial related.
+
 @author: alex
 """
 
@@ -100,6 +102,14 @@ def ChebyVandermonde(pts, d):
             V[:,i] *= np.polynomial.chebyshev.chebval(pts[:,j], ind[:,P[i,j]])
     
     return V
+
+def FnVandermonde(pts, gs):
+    """
+    Evaluate each point at each function in g, all point evaluations for
+    gi are returned in the ith column
+    """
+    
+    return np.array([[g(i) for g in gs] for i in pts])
 
 def MaxVolumeSubMat(A):
     """
